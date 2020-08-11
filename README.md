@@ -2,7 +2,7 @@
 
 I don't know anything, i'm just a fish
 
-``` cpp
+``` c++
 auto conn_pool = new SQLiteConnectionPool("Hello-SQLite3.db", 2, 5);
 ConnPoolManage conn_pool_manage(conn_pool);
 Aurata aur(conn_pool);
@@ -78,7 +78,7 @@ cout << endl;
 delete conn_pool;
 ```
 
-``` cpp
+``` c++
 bool Add(Json::Value&& v) {
 	static std::string sql = "insert into friends(name, description) values(?, ?)";
 	if (!v.isMember("name") || !v["name"].isString()) {
