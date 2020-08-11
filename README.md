@@ -3,7 +3,7 @@
 I don't know anything, i'm just a fish
 
 ## Windows
-Use Visual studio
+Use Visual studio , please
 ```
 
 ## Linux
