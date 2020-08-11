@@ -24,6 +24,8 @@ SOFTWARE.
 
 */
 
+#include <thread>
+
 #include "SQLiteConnectionPool.h"
 #include "sqlite/sqlite3.h"
 
