@@ -24,14 +24,21 @@ SOFTWARE.
 
 */
 
-#pragma once
+#include "ConnPoolManage.h"
 
-#include "Connection.h"
+aurata::ConnectionPool* ConnPoolManage::conn_pool = nullptr;
+ConnPoolManage::ConnPoolManage() {
 
-namespace aurata {
-	class ConnectionPool {
-	public:
-		virtual Connection* GetConnection() = 0;
-		virtual void ReturnConnection(Connection* connection) = 0;
-	};
+}
+
+ConnPoolManage::ConnPoolManage(aurata::ConnectionPool* conn_pool) {
+	ConnPoolManage::conn_pool = conn_pool;
+}
+
+ConnPoolManage::~ConnPoolManage() {
+
+}
+
+aurata::ConnectionPool* ConnPoolManage::GetConnPool() {
+	return ConnPoolManage::conn_pool;
 }

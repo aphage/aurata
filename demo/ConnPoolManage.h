@@ -26,12 +26,18 @@ SOFTWARE.
 
 #pragma once
 
-#include "Connection.h"
+#include "../aurata/ConnectionPool.h"
 
-namespace aurata {
-	class ConnectionPool {
-	public:
-		virtual Connection* GetConnection() = 0;
-		virtual void ReturnConnection(Connection* connection) = 0;
-	};
-}
+class ConnPoolManage {
+public:
+	ConnPoolManage();
+
+	ConnPoolManage(aurata::ConnectionPool* conn_pool);
+
+	~ConnPoolManage();
+
+	aurata::ConnectionPool* GetConnPool();
+
+private:
+	static aurata::ConnectionPool* conn_pool;
+};

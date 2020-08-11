@@ -1,11 +1,37 @@
-﻿#include "Aurata.h"
+﻿/*
+
+MIT License
+
+Copyright(c) 2020 Misaka Mikoto(aphage) diyloli@outlook.com
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this softwareand associated documentation files(the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and /or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions :
+
+The above copyright noticeand this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+*/
+
+#include "Aurata.h"
 
 #include "sqlite/sqlite3.h"
 
 namespace aurata{
 
-	thread_local std::stack<Connection*> Aurata::connections = std::stack<Connection*>();
-	Aurata::Aurata() {
+	thread_local std::stack<Connection*> local_conns;
+	Aurata::Aurata(ConnectionPool* conn_pool):conn_pool(conn_pool) {
 		
 	}
 
@@ -14,202 +40,235 @@ namespace aurata{
 	}
 
 	Connection* Aurata::GetConnection(bool& is_local) {
-		if (!this->connections.empty()) {
-			is_local = true;
-			return this->connections.top();
+		if (local_conns.empty()) {
+			is_local = false;
+			auto conn = this->conn_pool->GetConnection();
+			local_conns.push(conn);
+			return conn;
 		}
-
-		is_local = false;
-		return this->conn_manage.GetConnection();
+		else {
+			is_local = true;
+			return local_conns.top();
+		}
 	}
 
-	void Aurata::FreeConnection(bool& is_local, Connection* connection) {
+	void Aurata::ReturnConnection(Connection* connection, bool& is_local) {
 		if (!is_local) {
-			this->conn_manage.FreeConnection(connection);
+			this->conn_pool->ReturnConnection(connection);
+			local_conns.pop();
 		}
+	}
+
+	void Aurata::BindParams(sqlite3_stmt* stmt, std::vector<AurataParam*>&& params) {
+		for (int i = 0; i < params.size(); i++) {
+			{
+				auto v = dynamic_cast<AurataParamInteger*>(params[i]);
+				if (v != nullptr) {
+					sqlite3_bind_int64(stmt, i + 1, v->v);
+					continue;
+				}
+			}
+			{
+				auto v = dynamic_cast<AurataParamDouble*>(params[i]);
+				if (v != nullptr) {
+					sqlite3_bind_double(stmt, i + 1, v->v);
+					continue;
+				}
+			}
+			{
+				auto v = dynamic_cast<AurataParamBlob*>(params[i]);
+				if (v != nullptr) {
+					sqlite3_bind_blob(stmt, i + 1, v->v.c_str(), v->v.length(), SQLITE_STATIC);
+					continue;
+				}
+			}
+			{
+				auto v = dynamic_cast<AurataParamText*>(params[i]);
+				if (v != nullptr) {
+					sqlite3_bind_text(stmt, i + 1, v->v.c_str(), v->v.length(), SQLITE_STATIC);
+					continue;
+				}
+			}
+			{
+				auto v = dynamic_cast<AurataParamNull*>(params[i]);
+				if (v != nullptr) {
+					sqlite3_bind_null(stmt, i + 1);
+					continue;
+				}
+			}
+
+		}
+	}
+
+	void Aurata::FreeParams(std::vector<AurataParam*>&& params) {
+		for (int i = 0; i < params.size(); i++) {
+			{
+				auto v = dynamic_cast<AurataParamInteger*>(params[i]);
+				if (v != nullptr) {
+					delete v;
+					continue;
+				}
+			}
+			{
+				auto v = dynamic_cast<AurataParamDouble*>(params[i]);
+				if (v != nullptr) {
+					delete v;
+					continue;
+				}
+			}
+			{
+				auto v = dynamic_cast<AurataParamBlob*>(params[i]);
+				if (v != nullptr) {
+					delete v;
+					continue;
+				}
+			}
+			{
+				auto v = dynamic_cast<AurataParamText*>(params[i]);
+				if (v != nullptr) {
+					delete v;
+					continue;
+				}
+			}
+			{
+				auto v = dynamic_cast<AurataParamNull*>(params[i]);
+				if (v != nullptr) {
+					delete v;
+					continue;
+				}
+			}
+		}
+	}
+
+	Json::Value Aurata::ReadRow(sqlite3_stmt* stmt) {
+		auto count = sqlite3_column_count(stmt);
+		Json::Value row;
+
+		for (int i = 0; i < count; i++) {
+			auto name = sqlite3_column_name(stmt, i);
+			auto type = sqlite3_column_type(stmt, i);
+			switch (type) {
+				case SQLITE_INTEGER: {
+					row[name] = static_cast<int64_t>(sqlite3_column_int64(stmt, i));
+				}break;
+				case SQLITE_FLOAT: {
+					row[name] = static_cast<double>(sqlite3_column_double(stmt, i));
+				}break;
+				case SQLITE_BLOB: {
+					auto bytes = sqlite3_column_bytes(stmt, i);
+					row[name] = std::string(static_cast<const char*>(sqlite3_column_blob(stmt, i)), bytes);
+				}break;
+				case SQLITE_NULL: {
+					row[name] = Json::nullValue;
+				}break;
+				case SQLITE_TEXT: {
+					auto bytes = sqlite3_column_bytes(stmt, i);
+					row[name] = std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, i)), bytes);
+				}break;
+			}
+		}
+		return row;
 	}
 
 	std::vector<Json::Value> Aurata::Select(std::string&& sql, std::vector<AurataParam*>&& params) {
 		bool is_local = false;
-		auto conn = reinterpret_cast<sqlite3*>(this->GetConnection(is_local));
+		auto conn = this->GetConnection(is_local);
+		
 		std::vector<Json::Value> list;
 		sqlite3_stmt* res = nullptr;
-		auto rc = sqlite3_prepare_v2(conn, sql.c_str(), sql.length(), &res, NULL);
+		auto rc = sqlite3_prepare_v2(reinterpret_cast<sqlite3*>(conn), sql.c_str(), sql.length(), &res, NULL);
 		if (rc != SQLITE_OK) {
-			this->FreeConnection(is_local, reinterpret_cast<Connection*>(conn));
-			return list;
+			this->ReturnConnection(conn, is_local);
+			return std::move(list);
 		}
 
-		for (int i = 0; i < params.size(); i++) {
-			{
-				auto v = dynamic_cast<AurataParamInteger*>(params[i]);
-				if (v != nullptr) {
-					sqlite3_bind_int64(res, i + 1, v->v);
-					continue;
-				}
-			}
-			{
-				auto v = dynamic_cast<AurataParamDouble*>(params[i]);
-				if (v != nullptr) {
-					sqlite3_bind_double(res, i + 1, v->v);
-					continue;
-				}
-			}
-			{
-				auto v = dynamic_cast<AurataParamBlob*>(params[i]);
-				if (v != nullptr) {
-					sqlite3_bind_blob(res, i + 1, v->v.c_str(), v->v.length(), SQLITE_STATIC);
-					continue;
-				}
-			}
-			{
-				auto v = dynamic_cast<AurataParamText*>(params[i]);
-				if (v != nullptr) {
-					sqlite3_bind_text(res, i + 1, v->v.c_str(), v->v.length(), SQLITE_STATIC);
-					continue;
-				}
-			}
-			{
-				auto v = dynamic_cast<AurataParamNull*>(params[i]);
-				if (v != nullptr) {
-					sqlite3_bind_null(res, i + 1);
-					delete v;
-					continue;
-				}
-			}
-
-		}
+		this->BindParams(res, std::move(params));
 
 		while (sqlite3_step(res) == SQLITE_ROW) {
-			auto count = sqlite3_column_count(res);
-			Json::Value data;
-			for (int i = 0; i < count; i++) {
-				auto name = sqlite3_column_name(res, i);
-				auto type = sqlite3_column_type(res, i);
-				switch (type) {
-				case SQLITE_INTEGER: {
-					data[name] = sqlite3_column_int64(res, i);
-				}break;
-				case SQLITE_FLOAT: {
-					data[name] = sqlite3_column_double(res, i);
-				}break;
-				case SQLITE_BLOB: {
-					auto bytes = sqlite3_column_bytes(res, i);
-					data[name] = std::string((char*)sqlite3_column_blob(res, i), bytes);
-				}break;
-				case SQLITE_NULL: {
-					data[name] = Json::nullValue;
-				}break;
-				case SQLITE_TEXT: {
-					auto bytes = sqlite3_column_bytes(res, i);
-					data[name] = std::string((char*)sqlite3_column_text(res, i), bytes);
-				}break;
-				}
-			}
-			list.push_back(std::move(data));
+			list.push_back(std::move(this->ReadRow(res)));
 		}
 		sqlite3_finalize(res);
 
-		for (int i = 0; i < params.size(); i++) {
-			{
-				auto v = dynamic_cast<AurataParamInteger*>(params[i]);
-				if (v != nullptr) {
-					delete v;
-					continue;
-				}
-			}
-			{
-				auto v = dynamic_cast<AurataParamDouble*>(params[i]);
-				if (v != nullptr) {
-					delete v;
-					continue;
-				}
-			}
-			{
-				auto v = dynamic_cast<AurataParamBlob*>(params[i]);
-				if (v != nullptr) {
-					delete v;
-					continue;
-				}
-			}
-			{
-				auto v = dynamic_cast<AurataParamText*>(params[i]);
-				if (v != nullptr) {
-					delete v;
-					continue;
-				}
-			}
-			{
-				auto v = dynamic_cast<AurataParamNull*>(params[i]);
-				if (v != nullptr) {
-					delete v;
-					continue;
-				}
-			}
+		this->FreeParams(std::move(params));
 
-		}
-
-		this->FreeConnection(is_local, reinterpret_cast<Connection*>(conn));
+		this->ReturnConnection(conn, is_local);
 
 		return std::move(list);
 	}
 
 	int Aurata::Update(std::string&& sql, std::vector<AurataParam*>&& params) {
 		bool is_local = false;
-		auto conn = reinterpret_cast<sqlite3*>(this->GetConnection(is_local));
+		auto conn = this->GetConnection(is_local);
 
-		if (!is_local) {
-			this->connections.push(reinterpret_cast<Connection*>(conn));
+		sqlite3_stmt* res = nullptr;
+		auto rc = sqlite3_prepare_v2(reinterpret_cast<sqlite3*>(conn), sql.c_str(), sql.length(), &res, NULL);
+		if (rc != SQLITE_OK) {
+			this->ReturnConnection(conn, is_local);
+			return 0;
 		}
+		this->BindParams(res, std::move(params));
+		int count = 0;
 
-		this->Select(std::move(sql), std::move(params));
-		auto count = sqlite3_changes(conn);
-
-		if (!is_local) {
-			this->connections.pop();
+		if (sqlite3_step(res) == SQLITE_DONE) {
+			count = sqlite3_changes(reinterpret_cast<sqlite3*>(conn));
 		}
-		this->FreeConnection(is_local, reinterpret_cast<Connection*>(conn));
+		sqlite3_finalize(res);
+		this->FreeParams(std::move(params));
+		this->ReturnConnection(conn, is_local);
 
 		return count;
 	}
 	
-	int Aurata::Insert(std::string&& sql, std::vector<AurataParam*>&& params, int64_t* auto_id) {
+	int64_t Aurata::Insert(std::string&& sql, std::vector<AurataParam*>&& params) {
 		bool is_local = false;
-		auto conn = reinterpret_cast<sqlite3*>(this->GetConnection(is_local));
+		auto conn = this->GetConnection(is_local);
 
-		if (!is_local) {
-			this->connections.push(reinterpret_cast<Connection*>(conn));
-		}
-
-		this->Select(std::move(sql), std::move(params));
-		auto count = sqlite3_changes(conn);
-
-		if (auto_id != nullptr) {
-			*auto_id = sqlite3_last_insert_rowid(conn);
-		}
-
-		if (!is_local) {
-			this->connections.pop();
-		}
-		this->FreeConnection(is_local, reinterpret_cast<Connection*>(conn));
-		return count;
+		this->Update(std::move(sql), std::move(params));
+		auto auto_id = sqlite3_last_insert_rowid(reinterpret_cast<sqlite3*>(conn));
+		this->ReturnConnection(conn, is_local);
+		return auto_id;
 	}
 
 	bool Aurata::Transaction(std::function<bool()> f) {
-		auto conn = reinterpret_cast<sqlite3*>(this->conn_manage.GetConnection());
-		this->connections.push(reinterpret_cast<Connection*>(conn));
-		this->Update("BEGIN TRANSACTION;", {});
+		auto conn = this->conn_pool->GetConnection();
+		local_conns.push(conn);
+
+		this->Update("BEGIN TRANSACTION;");
 
 		if (!f()) {
-			this->Update("ROLLBACK;", {});
-			this->conn_manage.FreeConnection(reinterpret_cast<Connection*>(conn));
-			this->connections.pop();
+			this->Update("ROLLBACK;");
+			this->conn_pool->ReturnConnection(conn);
+			local_conns.pop();
 			return false;
 		}
 
-		this->Update("COMMIT;", {});
-		this->conn_manage.FreeConnection(reinterpret_cast<Connection*>(conn));
-		this->connections.pop();
+		this->Update("COMMIT;");
+		this->conn_pool->ReturnConnection(conn);
+		local_conns.pop();
 		return true;
+	}
+
+	bool Aurata::BackupDB(std::string&& file_name) {
+		sqlite3* file = nullptr;
+		auto rc = sqlite3_open(file_name.c_str(), &file);
+		if (rc != SQLITE_OK) {
+			return false;
+		}
+		bool r = false;
+		auto conn = this->conn_pool->GetConnection();
+		auto backup = sqlite3_backup_init(file, "main", reinterpret_cast<sqlite3*>(conn), "main");
+		if (backup) {
+			do {
+				rc = sqlite3_backup_step(backup, 5);
+				if(rc == SQLITE_OK || rc == SQLITE_BUSY || rc == SQLITE_LOCKED){
+					sqlite3_sleep(250);
+				}
+			} while (rc == SQLITE_OK || rc == SQLITE_BUSY || rc == SQLITE_LOCKED);
+			sqlite3_backup_finish(backup);
+			r = true;
+		}
+		this->conn_pool->ReturnConnection(conn);
+		sqlite3_close(file);
+		return r;
 	}
 }
