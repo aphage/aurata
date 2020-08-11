@@ -1,6 +1,6 @@
 ﻿# aurata
 
-I am a fish
+I don't know anything, i'm just a fish
 
 ``` cpp
 auto conn_pool = new SQLiteConnectionPool("Hello-SQLite3.db", 2, 5);
