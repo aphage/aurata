@@ -2,6 +2,18 @@
 
 I don't know anything, i'm just a fish
 
+## Windows
+Use Visual studio
+```
+
+## Linux
+
+``` bash
+mkdir out && cd out
+cmake .. -DCMAKE_TOOLCHAIN_FILE=../linux.cmake
+./demo/demo
+```
+
 ``` c++
 auto conn_pool = new SQLiteConnectionPool("Hello-SQLite3.db", 2, 5);
 ConnPoolManage conn_pool_manage(conn_pool);
