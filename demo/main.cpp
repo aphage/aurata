@@ -83,13 +83,13 @@ int main() {
 
 	Json::Value friend4;
 	friend4["name"] = u8"himself65";
-	friend4["description"] = u8"我好失败啊 ( 我是垃圾.jpg";
+	friend4["description"] = u8"我好失败啊 ( 我太成功了.jpg";
 
 	friends_service.Add(std::move(friend4));
 
 	Json::Value friend5;
-	friend5["name"] = u8"立党";
-	friend5["description"] = u8"我好失败啊 ( 我是垃圾.jpg";
+	friend5["name"] = u8"迟先生";
+	friend5["description"] = u8"我好失败啊 ( 我太成功了.jpg";
 
 	friends_service.Add(std::move(friend5));
 
