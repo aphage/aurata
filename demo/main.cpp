@@ -94,12 +94,47 @@ int main() {
 	friends_service.Add(std::move(friend5));
 
 	std::vector<Json::Value> friends;
-
-	for (int i = 0; i < 10777; i++) {
+	auto start = std::chrono::steady_clock::now();
+	for (int i = 0; i < 107770; i++) {
 		friends.push_back(friend1);
 	}
+	auto end = std::chrono::steady_clock::now();
+	std::chrono::duration<double> elapsed_seconds = end - start;
+	std::cout << "elapsed time: " << elapsed_seconds.count() << "s\n";
 
-	friends_service.Add(std::move(friends));
+	start = std::chrono::steady_clock::now();
+	auto friends1 = friends;
+	auto friends2 = friends;
+	auto friends3 = friends;
+	auto friends4 = friends;
+	auto friends5 = friends;
+	end = std::chrono::steady_clock::now();
+	elapsed_seconds = end - start;
+	std::cout << "elapsed time: " << elapsed_seconds.count() << "s\n";
+
+	std::vector<std::thread> tlist;
+	start = std::chrono::steady_clock::now();
+	tlist.push_back(std::thread([&] {
+		friends_service.Add(std::move(friends1));
+		}));
+	tlist.push_back(std::thread([&] {
+		friends_service.Add(std::move(friends2));
+		}));
+	tlist.push_back(std::thread([&] {
+		friends_service.Add(std::move(friends3));
+		}));
+	tlist.push_back(std::thread([&] {
+		friends_service.Add(std::move(friends4));
+		}));
+	tlist.push_back(std::thread([&] {
+		friends_service.Add(std::move(friends5));
+		}));
+	for (auto& t : tlist) {
+		t.join();
+	}
+	end = std::chrono::steady_clock::now();
+	elapsed_seconds = end - start;
+	std::cout << "elapsed time: " << elapsed_seconds.count() << "s\n";
 
 	Json::Value search_friend;
 	search_friend["name"] = u8"御坂";
